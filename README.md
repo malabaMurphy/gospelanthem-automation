@@ -2,22 +2,24 @@
 
 Automated daily Bible-verse posting for `@gospelanthem` on Instagram.
 
-Every day at your chosen time, GitHub Actions:
-1. Picks the day's KJV verse from a curated bank of 234 verses
-2. Generates a "Serene Cream" 1080×1080 poster
-3. Commits it to the `posted/` archive
-4. Publishes it to Instagram via the Meta Graph API
+**Three posts every day, fully automatic:**
 
-No server, no PC needs to be on, no manual work after the one-time setup.
+| Slot | Time (Tanzania) | Type | Format |
+| --- | --- | --- | --- |
+| Morning | 8:00 AM | Feed post | 1080×1080 square |
+| Midday | 12:00 PM | Story | 1080×1920 vertical |
+| Evening | 6:00 PM | Feed post | 1080×1080 square |
+
+Each slot picks a different verse so all three feel fresh.
 
 ---
 
 ## Quick start
 
-1. Read [`SETUP.md`](./SETUP.md) — walks you through the one-time Meta API setup (~30-60 minutes, you do this once and never again).
+1. Read [`SETUP.md`](./SETUP.md) — one-time Meta API setup.
 2. Push this repo to GitHub.
 3. Add two secrets: `INSTAGRAM_USER_ID` and `IG_ACCESS_TOKEN`.
-4. Trigger the workflow manually once to verify, then it runs daily.
+4. Trigger the workflow manually for each slot to verify, then it runs daily.
 
 ---
 
@@ -26,16 +28,16 @@ No server, no PC needs to be on, no manual work after the one-time setup.
 ```
 gospelanthem-automation/
 ├── .github/workflows/
-│   └── daily_post.yml         # The daily cron job
-├── fonts/                     # Bundled Lora + Poppins (so it works anywhere)
-├── posted/                    # Auto-populated archive of every poster ever made
+│   └── daily_post.yml         # Three cron triggers (8am, 12pm, 6pm Tanzania)
+├── fonts/                     # Bundled Lora + Poppins
+├── posted/                    # Auto-populated archive of every poster
 ├── src/
 │   ├── verses.json            # 234 curated KJV verses
-│   ├── generate_poster.py     # Serene Cream poster renderer
-│   ├── caption_builder.py     # Composes the IG caption + hashtags
-│   ├── publish_instagram.py   # Meta Graph API client
-│   └── main.py                # Orchestrator (pick → render → publish)
-├── requirements.txt           # Just Pillow
+│   ├── generate_poster.py     # Serene Cream renderer (feed + story formats)
+│   ├── caption_builder.py     # Composes IG caption + hashtags
+│   ├── publish_instagram.py   # Meta Graph API client (posts + stories)
+│   └── main.py                # Slot-aware orchestrator
+├── requirements.txt
 ├── SETUP.md                   # ← Start here
 └── README.md
 ```
@@ -44,46 +46,50 @@ gospelanthem-automation/
 
 ## Local testing
 
-You can preview today's poster (and the caption) without touching Instagram:
+Generate any slot for any date without touching Instagram:
 
 ```bash
 pip install -r requirements.txt
-python src/main.py --dry-run
+
+# Test today's three slots
+python src/main.py --slot morning --dry-run
+python src/main.py --slot midday  --dry-run
+python src/main.py --slot evening --dry-run
+
+# Test a specific date
+python src/main.py --slot morning --dry-run --date 2026-12-25
 ```
 
-The poster is saved to `posted/YYYY-MM-DD.png`.
-
-To preview a specific date:
-
-```bash
-python src/main.py --dry-run --date 2026-12-25
-```
+Posters are saved to `posted/YYYY-MM-DD-<slot>.png`.
 
 ---
 
-## How the verse is picked
+## How verses are picked
 
-`pick_verse_for_today` uses `(day_of_year - 1 + year_shift) % len(verses)`.
-- Different days within the year → different verses.
-- Different years → the same calendar date will get a different verse (rotates by 7).
-- Adding new verses to `verses.json` automatically expands the rotation.
+Each slot uses `(day_of_year - 1 + year_shift + slot_offset) % len(verses)`:
+
+- Morning slot: offset 0
+- Midday slot: offset 78
+- Evening slot: offset 156
+
+This guarantees that on any given day, the three slots get three *different* verses across the bank. Different years shift everything by 7 so the same calendar date gets fresh verses next year.
 
 ---
 
 ## Customization cheat sheet
 
-| Want to change…              | Edit…                                             |
-| ---------------------------- | ------------------------------------------------- |
-| Post time                    | `cron` line in `.github/workflows/daily_post.yml` |
-| Style colors / fonts         | Constants at the top of `src/generate_poster.py`  |
-| Caption wording / hashtags   | `src/caption_builder.py`                          |
-| Add more verses              | Append to `src/verses.json`                       |
-| Use a different translation  | Replace verses in `src/verses.json`               |
+| Want to change… | Edit… |
+| --- | --- |
+| Post times | The three `cron` lines in `.github/workflows/daily_post.yml` |
+| Style colors / fonts | Constants at the top of `src/generate_poster.py` |
+| Caption wording / hashtags | `src/caption_builder.py` |
+| Add more verses | Append to `src/verses.json` |
+| Add a 4th slot | Add to `SLOTS` dict in `src/main.py` and a 4th cron in the workflow |
 
 ---
 
 ## License & content notes
 
-- KJV is **public domain** — free to use commercially with no attribution required.
-- The fonts (Lora, Poppins) are licensed under the SIL Open Font License — free to use, embed, and redistribute.
-- The code is yours to use however you like.
+- KJV Bible text is **public domain** — free for any commercial use.
+- Lora and Poppins fonts are SIL Open Font License — free to embed and redistribute.
+- Code is yours.

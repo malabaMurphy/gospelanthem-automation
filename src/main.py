@@ -1,15 +1,18 @@
 """
 Main orchestrator for daily Instagram posting.
 
-Flow:
-  1. Pick today's verse (deterministic — based on day-of-year so no duplicates within the year)
-  2. Generate the Serene Cream poster
-  3. Save it to posted/YYYY-MM-DD.png so it's committed to the repo
-  4. Build the caption
-  5. Publish to Instagram Graph API using the raw GitHub URL of the just-committed image
+Supports 3 daily slots:
+  - morning  (8 AM Tanzania) -> feed post (square)
+  - midday   (12 PM Tanzania) -> story (vertical)
+  - evening  (6 PM Tanzania) -> feed post (square)
 
-This script is designed to be invoked by GitHub Actions but also runnable locally
-for testing (with --dry-run to skip actual publishing).
+Each slot picks a *different* verse for the same day so posts feel fresh.
+
+Flow:
+  1. Pick the verse for today + this slot (deterministic)
+  2. Generate the right poster (feed or story format)
+  3. Save it under posted/YYYY-MM-DD-<slot>.png
+  4. Publish to Instagram Graph API
 """
 import argparse
 import json
@@ -31,40 +34,60 @@ VERSES_PATH = ROOT / "src" / "verses.json"
 POSTED_DIR = ROOT / "posted"
 
 
-def pick_verse_for_today(verses: list, today: date) -> dict:
+# Slot definitions
+SLOTS = {
+    "morning": {
+        "format": "feed",
+        "media_type": None,        # regular feed post
+        "verse_offset": 0,         # uses today's primary verse
+    },
+    "midday": {
+        "format": "story",
+        "media_type": "STORIES",
+        "verse_offset": 78,        # offset into the verses list (~1/3)
+    },
+    "evening": {
+        "format": "feed",
+        "media_type": None,
+        "verse_offset": 156,       # offset into the verses list (~2/3)
+    },
+}
+
+
+def pick_verse(verses: list, today: date, slot_offset: int) -> dict:
     """
-    Deterministic verse selection based on day-of-year + year offset.
-    Day-of-year (1-366) maps into the verses list with modulo, plus a
-    year-based shift so consecutive years aren't identical.
+    Pick a verse for a given date + slot.
+    Uses day-of-year + year shift + slot offset, all modulo verse count.
+    Different slots on the same day get different verses.
     """
-    doy = today.timetuple().tm_yday        # 1..366
-    year_shift = (today.year - 2025) * 7   # rotate by 7 each year
-    idx = (doy - 1 + year_shift) % len(verses)
+    doy = today.timetuple().tm_yday
+    year_shift = (today.year - 2025) * 7
+    idx = (doy - 1 + year_shift + slot_offset) % len(verses)
     return verses[idx]
 
 
 def build_image_url(repo_slug: str, branch: str, relative_path: str) -> str:
-    """Build a raw.githubusercontent.com URL for the just-committed image."""
-    # Example: https://raw.githubusercontent.com/user/repo/main/posted/2026-04-20.png
     return f"https://raw.githubusercontent.com/{repo_slug}/{branch}/{relative_path}"
 
 
 def main():
     parser = argparse.ArgumentParser(description="Daily Instagram poster")
     parser.add_argument(
+        "--slot",
+        choices=list(SLOTS.keys()),
+        required=True,
+        help="Which daily slot to publish (morning, midday, or evening)",
+    )
+    parser.add_argument(
         "--mode",
         choices=["generate", "publish", "all"],
         default="all",
-        help=(
-            "generate: only build the poster (used by step 1 of CI). "
-            "publish: only publish (assumes image already committed and reachable). "
-            "all: do both, useful locally with --dry-run."
-        ),
+        help="generate-only, publish-only, or both (default: all)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Generate the poster but do not call the Instagram API.",
+        help="Generate the poster but skip the Instagram API call.",
     )
     parser.add_argument(
         "--date",
@@ -74,29 +97,36 @@ def main():
     )
     args = parser.parse_args()
 
+    slot = args.slot
+    slot_cfg = SLOTS[slot]
+
     # Resolve target date
-    if args.date:
-        target_date = date.fromisoformat(args.date)
-    else:
-        target_date = date.today()
+    target_date = date.fromisoformat(args.date) if args.date else date.today()
 
     # Load verses
     with open(VERSES_PATH, "r", encoding="utf-8") as f:
         verses = json.load(f)
 
-    verse = pick_verse_for_today(verses, target_date)
+    verse = pick_verse(verses, target_date, slot_cfg["verse_offset"])
     print(f"[main] Date: {target_date.isoformat()}")
+    print(f"[main] Slot: {slot} ({slot_cfg['format']})")
     print(f"[main] Verse: \"{verse['text']}\" — {verse['ref']}")
     print(f"[main] Theme: {verse.get('theme', 'n/a')}")
 
-    # Path that the workflow will commit
-    image_filename = f"{target_date.isoformat()}.png"
+    # Output filename includes slot so each post has its own file
+    image_filename = f"{target_date.isoformat()}-{slot}.png"
     image_relpath = f"posted/{image_filename}"
     image_path = ROOT / image_relpath
 
     if args.mode in ("generate", "all"):
         POSTED_DIR.mkdir(exist_ok=True)
-        generate_poster(verse["text"], verse["ref"], str(image_path))
+        generate_poster(
+            verse["text"],
+            verse["ref"],
+            str(image_path),
+            format=slot_cfg["format"],
+            hook=verse.get("hook"),
+        )
         print(f"[main] Poster saved: {image_path}")
 
     if args.mode in ("publish", "all"):
@@ -104,14 +134,20 @@ def main():
             print("[main] DRY RUN — skipping Instagram publish.")
             print("[main] Caption preview:")
             print("-" * 50)
-            print(build_caption(verse["text"], verse["ref"], verse.get("theme", "")))
+            if slot_cfg["media_type"] == "STORIES":
+                print("(Stories don't have captions on Instagram)")
+            else:
+                print(build_caption(
+                    verse["text"], verse["ref"],
+                    theme=verse.get("theme", ""),
+                    hook=verse.get("hook"),
+                ))
             print("-" * 50)
             return
 
-        # Required env vars (set in GitHub Actions secrets)
         ig_user_id = os.environ.get("INSTAGRAM_USER_ID")
         access_token = os.environ.get("IG_ACCESS_TOKEN")
-        repo_slug = os.environ.get("GITHUB_REPOSITORY")  # auto-set by Actions
+        repo_slug = os.environ.get("GITHUB_REPOSITORY")
         branch = os.environ.get("GITHUB_REF_NAME", "main")
 
         missing = [
@@ -125,9 +161,16 @@ def main():
             raise SystemExit(f"Missing required env vars: {missing}")
 
         image_url = build_image_url(repo_slug, branch, image_relpath)
-        caption = build_caption(verse["text"], verse["ref"], verse.get("theme", ""))
+        caption = build_caption(
+            verse["text"], verse["ref"],
+            theme=verse.get("theme", ""),
+            hook=verse.get("hook"),
+        )
 
-        media_id = publish_image(ig_user_id, image_url, caption, access_token)
+        media_id = publish_image(
+            ig_user_id, image_url, caption, access_token,
+            media_type=slot_cfg["media_type"],
+        )
         print(f"[main] Done. Posted media id: {media_id}")
 
 

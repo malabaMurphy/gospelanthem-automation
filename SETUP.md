@@ -54,21 +54,53 @@ Plan for **30–60 minutes**, ideally on a laptop. You'll do this once.
 
 ## Part 3 — Generate a long-lived token (5 minutes)
 
-The default access token expires in 1 hour. You need a **long-lived token** that lasts ~60 days. (We'll set up a refresh strategy in Part 6 so you never have to think about this again.)
+The default access token expires in 1 hour. You need a **long-lived token** that lasts ~60 days.
 
-1. Visit https://developers.facebook.com/tools/debug/accesstoken/ and paste your short-lived token to confirm it's working.
+> **Note:** The exact steps depend on which login flow your token uses. Look at the first 4 characters of your token:
+> - **`IGAA...`** → Instagram Business Login flow → follow Part 3a below
+> - **`EAA...`** → Facebook Login for Business flow → follow Part 3b below
 
-2. To exchange it for a long-lived one, run this URL in your browser (replace the placeholders):
+---
+
+### Part 3a — For IGAA tokens (Instagram Business Login)
+
+1. In your Meta app dashboard → **Instagram** (left sidebar) → **API setup with Instagram login**.
+2. Scroll down — you'll see **Instagram app ID** and **Instagram app secret**. Click the eye icon to reveal the secret. Copy it. *This is different from the Meta App Secret in App Settings → Basic.*
+3. Open a new browser tab and paste this URL, replacing the placeholders:
 
    ```
-   https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=YOUR_APP_ID&client_secret=YOUR_APP_SECRET&fb_exchange_token=YOUR_SHORT_TOKEN
+   https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=YOUR_INSTAGRAM_APP_SECRET&access_token=YOUR_SHORT_IGAA_TOKEN
    ```
 
-   - **App ID** and **App Secret** are on your app dashboard under **App Settings → Basic**.
-   - The response will be JSON like: `{"access_token":"EAA...VERYLONG", "expires_in": 5183999}`.
-   - That's your **60-day token**. Save it.
+4. Press Enter. The response will be JSON like:
+   ```json
+   {"access_token":"IGAA...VERYLONG", "token_type":"bearer", "expires_in":5183999}
+   ```
+5. Copy the `access_token` value — that's your **60-day long-lived IGAA token**.
 
-> 💡 Quick alternative: paste the short token into Meta's [Access Token Tool](https://developers.facebook.com/tools/accesstoken/) and click "Extend Access Token".
+> ✅ The default `BASE_URL` in `src/publish_instagram.py` is set to `graph.instagram.com` for IGAA tokens — no code change needed.
+
+---
+
+### Part 3b — For EAA tokens (Facebook Login for Business)
+
+1. Go to **App Settings → Basic** in the dashboard.
+2. Copy the **App ID** and **App Secret** (click "Show" on the secret).
+3. Open a new browser tab and paste this URL, replacing the placeholders:
+
+   ```
+   https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=YOUR_APP_ID&client_secret=YOUR_APP_SECRET&fb_exchange_token=YOUR_SHORT_EAA_TOKEN
+   ```
+
+4. Press Enter. The response will be JSON like:
+   ```json
+   {"access_token":"EAA...VERYLONGSTRING","token_type":"bearer","expires_in":5183999}
+   ```
+5. Copy the `access_token` value — that's your **60-day long-lived EAA token**.
+
+> ⚠️ If you use EAA tokens, change `BASE_URL` in `src/publish_instagram.py` from `graph.instagram.com` to `graph.facebook.com`.
+
+💡 **Easier alternative for EAA tokens only:** paste the short token into Meta's [Access Token Tool](https://developers.facebook.com/tools/accesstoken/) and click "Extend Access Token". (This shortcut does NOT work for IGAA tokens.)
 
 ---
 
@@ -107,54 +139,79 @@ The default access token expires in 1 hour. You need a **long-lived token** that
 
 ---
 
-## Part 6 — Test it (5 minutes)
+# PART 6 — Enable workflow permissions, then test (5 min)
 
-1. On GitHub, go to your repo → **Actions** tab.
+**Step 1.** Still in repo Settings, click **Actions** (left sidebar) → **General**.
 
-2. If you see "Workflows aren't being run on this fork", click **Enable workflows**.
+**Step 2.** Scroll down to **Workflow permissions**. Select **Read and write permissions** → click **Save**.
 
-3. Click **Daily Instagram Post** in the left sidebar → **Run workflow** → **Run workflow** (green button).
+**Step 3.** Go to the **Actions** tab (top of the repo).
 
-4. Watch the run. If it succeeds:
-   - ✅ A new image appears in the `posted/` folder of the repo
-   - ✅ A new post appears on `@gospelanthem` Instagram
+**Step 4.** If you see a yellow banner "Workflows aren't being run", click **I understand my workflows, go ahead and enable them**.
 
-5. If it fails, click into the run to see the error. Most common issues:
-   - **Token expired** → regenerate (see Part 7)
-   - **Instagram User ID wrong** → re-check step 7 of Part 2
-   - **Permission denied on push** → repo Settings → Actions → General → Workflow permissions → "Read and write permissions" → Save
+**Step 5.** In the left sidebar, click **Daily Instagram Posts**.
+
+**Step 6.** Click **Run workflow** (right side). A dropdown appears asking which **slot** to run:
+- `morning` — feed post
+- `midday` — story
+- `evening` — feed post
+
+Pick one, then click the green **Run workflow** button.
+
+**Step 7.** Wait ~90 seconds. The run should turn green ✅.
+
+**Step 8.** Verify:
+- A fresh post (or story) appears on `@gospelanthem`
+- A new file appears in the `posted/` folder of your repo
+
+**Step 9.** Repeat steps 6-8 for each slot to test all three formats. Once all three work, you're done — they'll run automatically every day at 8 AM, 12 PM, and 6 PM Tanzania time.
+
+🎉 **System is live.**
 
 ---
 
 ## Part 7 — Long-term maintenance (this is the only ongoing thing)
 
-The 60-day token will eventually expire. You have two options:
+The 60-day token will eventually expire. With Instagram Business Login (IGAA tokens), refreshing is **dead simple** — no App ID or App Secret needed:
 
-### Option A — Manual refresh every ~50 days (simplest)
-- Set a calendar reminder for every 50 days.
-- Generate a new long-lived token using the URL in Part 3.
-- Update the `IG_ACCESS_TOKEN` secret on GitHub.
-- That's it — 2 minutes, 7 times a year.
+### Manual refresh every ~50 days (2 minutes)
 
-### Option B — Automated refresh (more advanced, optional)
-- Add a second weekly workflow that calls the token-refresh endpoint and updates the secret using the GitHub API. (I can build this for you later if Option A becomes annoying.)
+1. Set a calendar reminder for every 50 days.
+2. Open this URL in your browser, replacing the placeholder with your *current* long-lived token:
+
+   ```
+   https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=YOUR_CURRENT_LONG_LIVED_TOKEN
+   ```
+
+3. Copy the new `access_token` from the response.
+4. On GitHub: Settings → Secrets and variables → Actions → click `IG_ACCESS_TOKEN` → **Update secret** → paste the new token → save.
+5. Done. Good for another 60 days.
+
+> 💡 You can refresh anytime after the token is at least 24 hours old. Each refresh resets the clock to 60 days from that moment.
+
+### Automated refresh (advanced, optional)
+- Add a second weekly workflow that calls the refresh endpoint and updates the secret using the GitHub API. Tell me if Option A becomes annoying and I'll build this for you.
 
 ---
 
-## Changing the post time
+## Changing the post times
 
-Edit `.github/workflows/daily_post.yml` line:
+Edit `.github/workflows/daily_post.yml`. There are **three cron lines** (one per slot):
 
 ```yaml
-- cron: "0 5 * * *"
+- cron: "0 5 * * *"    # 8:00 AM Tanzania (morning feed)
+- cron: "0 9 * * *"    # 12:00 PM Tanzania (midday story)
+- cron: "0 15 * * *"   # 6:00 PM Tanzania (evening feed)
 ```
 
-Cron is in **UTC**. Tanzania is UTC+3, so:
+Cron is in **UTC**. Tanzania is UTC+3, so subtract 3 from your desired local hour:
 - `0 5 * * *` → 8:00 AM in Mwanza
-- `0 4 * * *` → 7:00 AM in Mwanza
-- `30 18 * * *` → 9:30 PM in Mwanza
+- `30 14 * * *` → 5:30 PM in Mwanza
+- `0 18 * * *` → 9:00 PM in Mwanza
 
 Use https://crontab.guru to test other times.
+
+⚠️ If you change a cron line, also update the corresponding `case` mapping in the "Determine slot" step of the same file so the workflow knows which slot the new cron triggers.
 
 ---
 
