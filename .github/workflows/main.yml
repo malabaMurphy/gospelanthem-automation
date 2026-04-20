@@ -1,13 +1,26 @@
-name: Daily Instagram Post
+name: Daily Instagram Posts
 
+# Three daily runs — Tanzania is UTC+3, so:
+#   05:00 UTC = 08:00 Tanzania (morning feed post)
+#   09:00 UTC = 12:00 Tanzania (midday story)
+#   15:00 UTC = 18:00 Tanzania (evening feed post)
 on:
   schedule:
-    # 05:00 UTC = 08:00 EAT (Tanzania). Adjust this line to change post time.
-    # Cron format: minute hour day month day-of-week
     - cron: "0 5 * * *"
-  workflow_dispatch: # allows you to trigger it manually from the Actions tab
+    - cron: "0 9 * * *"
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Which slot to post (morning / midday / evening)"
+        required: true
+        default: "morning"
+        type: choice
+        options:
+          - morning
+          - midday
+          - evening
 
-# We need write access so the workflow can commit the generated image
 permissions:
   contents: write
 
@@ -17,9 +30,25 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          # Use the default GITHUB_TOKEN with write permissions
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Determine which slot to run based on the trigger.
+      # - If manually triggered: use the input
+      # - If scheduled: derive from the cron string
+      - name: Determine slot
+        id: slot
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SLOT="${{ github.event.inputs.slot }}"
+          else
+            case "${{ github.event.schedule }}" in
+              "0 5 * * *")  SLOT="morning" ;;
+              "0 9 * * *")  SLOT="midday" ;;
+              "0 15 * * *") SLOT="evening" ;;
+              *) echo "Unknown schedule"; exit 1 ;;
+            esac
+          fi
+          echo "Running slot: $SLOT"
+          echo "slot=$SLOT" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,28 +60,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Generate today's poster
-        run: python src/main.py --mode=generate
+      - name: Generate today's poster for this slot
+        run: python src/main.py --slot ${{ steps.slot.outputs.slot }} --mode generate
 
       - name: Commit & push the new poster
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add posted/
-          # Only commit if there are actual changes
           if git diff --staged --quiet; then
-            echo "No new poster to commit (already exists for today)."
+            echo "No new poster to commit (already exists for today/slot)."
           else
-            git commit -m "Daily poster: $(date -u +%Y-%m-%d)"
+            git commit -m "Daily poster: $(date -u +%Y-%m-%d) (${{ steps.slot.outputs.slot }})"
             git push
           fi
 
       - name: Wait for raw.githubusercontent.com to serve the new file
-        # GitHub's raw CDN can take ~10-30s to pick up new commits.
-        # We wait, then poll the URL until it returns 200.
         run: |
-          IMAGE_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/posted/$(date -u +%Y-%m-%d).png"
-          echo "Waiting for $IMAGE_URL to be available..."
+          IMAGE_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/posted/$(date -u +%Y-%m-%d)-${{ steps.slot.outputs.slot }}.png"
+          echo "Waiting for $IMAGE_URL ..."
           for i in 1 2 3 4 5 6 7 8 9 10; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$IMAGE_URL")
             if [ "$STATUS" = "200" ]; then
@@ -67,4 +93,4 @@ jobs:
         env:
           INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
-        run: python src/main.py --mode=publish
+        run: python src/main.py --slot ${{ steps.slot.outputs.slot }} --mode publish
