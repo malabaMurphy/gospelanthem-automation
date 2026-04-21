@@ -22,8 +22,6 @@ on:
           - evening
 
 permissions:
-env:
-     FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   contents: write
 
 jobs:
