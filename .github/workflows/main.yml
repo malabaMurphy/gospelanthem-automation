@@ -6,9 +6,7 @@ name: Daily Instagram Posts
 #   15:00 UTC = 18:00 Tanzania (evening feed post)
 on:
   schedule:
-    - cron: "0 5 * * *"
     - cron: "0 9 * * *"
-    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       slot:
@@ -41,9 +39,7 @@ jobs:
             SLOT="${{ github.event.inputs.slot }}"
           else
             case "${{ github.event.schedule }}" in
-              "0 5 * * *")  SLOT="morning" ;;
               "0 9 * * *")  SLOT="midday" ;;
-              "0 15 * * *") SLOT="evening" ;;
               *) echo "Unknown schedule"; exit 1 ;;
             esac
           fi
